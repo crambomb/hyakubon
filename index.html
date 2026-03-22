@@ -189,7 +189,7 @@ body{font-family:'Noto Serif JP',serif;}
 <body>
 
 <!-- LOGIN -->
-<div id="s-login">
+<div id="s-login" class="hide">
   <div class="lb">
     <h1>百本</h1>
     <p>EDITOR LOGIN</p>
@@ -206,7 +206,7 @@ body{font-family:'Noto Serif JP',serif;}
 </div>
 
 <!-- READER -->
-<div id="s-reader" class="hide">
+<div id="s-reader">
   <div class="rh">
     <div class="rh-top">
       <div>
@@ -322,8 +322,12 @@ body{font-family:'Noto Serif JP',serif;}
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="bgreen" onclick="doPublish()">▶ 公開する</button>
         <button class="bghost" onclick="doUnpublish()">非公開に戻す</button>
-        <button onclick="doDelDaily()" style="font-family:'Space Mono',monospace;font-size:10px;padding:8px 16px;background:transparent;color:rgba(192,57,43,.7);border:1px solid rgba(192,57,43,.4);cursor:pointer">✕ この日を完全削除</button>
       </div>
+    </div>
+    <div class="acard">
+      <div class="acard-lb" style="color:rgba(192,57,43,.8)">危険な操作</div>
+      <div style="font-family:'Space Mono',monospace;font-size:9px;color:rgba(240,235,224,.3);margin-bottom:12px;line-height:1.8">現在表示中の日付のデータを全て削除します。<br>この操作は取り消せません。</div>
+      <button onclick="doDelDaily()" style="font-family:'Space Mono',monospace;font-size:10px;padding:8px 16px;background:transparent;color:rgba(192,57,43,.8);border:1px solid rgba(192,57,43,.5);cursor:pointer">✕ この日を完全削除</button>
     </div>
     <div class="acard"><div class="acard-lb">アーカイブ</div><div id="arc-list"></div></div>
   </div>
