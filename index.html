@@ -322,6 +322,7 @@ body{font-family:'Noto Serif JP',serif;}
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="bgreen" onclick="doPublish()">▶ 公開する</button>
         <button class="bghost" onclick="doUnpublish()">非公開に戻す</button>
+        <button onclick="doDelDaily()" style="font-family:'Space Mono',monospace;font-size:10px;padding:8px 16px;background:transparent;color:rgba(192,57,43,.7);border:1px solid rgba(192,57,43,.4);cursor:pointer">✕ この日を完全削除</button>
       </div>
     </div>
     <div class="acard"><div class="acard-lb">アーカイブ</div><div id="arc-list"></div></div>
@@ -838,14 +839,27 @@ function doImport(){
   if(bad.length){err.textContent='title/intro/body/genre が全て必要です';err.style.display='block';return;}
   var btn = document.getElementById('i-btn');
   btn.textContent='保存中...'; btn.disabled=true;
-  // daily_metaをupsert（同日付なら上書き）
-  upsert('daily_meta',[{date:date,theme:theme,status:'draft',editorial_comment: (D.daily&&D.daily.date===date&&D.daily.editorial_comment)||''}]).then(function(dm){
-    D.daily = dm[0];
-    // 既存storiesを全削除してから入れ直す
-    return del('stories','?daily_id=eq.'+D.daily.id);
-  }).then(function(){
-    return del('picks','?daily_id=eq.'+D.daily.id);
-  }).then(function(){
+
+  // 同日付の既存データを確認して上書き
+  get('daily_meta','?date=eq.'+date).then(function(existing){
+    var existingDaily = existing && existing[0] ? existing[0] : null;
+    if(existingDaily){
+      // 既存あり：stories・picks・votesを削除してからdaily_metaを更新
+      return del('picks','?daily_id=eq.'+existingDaily.id)
+        .then(function(){ return del('votes','?daily_id=eq.'+existingDaily.id); })
+        .then(function(){ return del('stories','?daily_id=eq.'+existingDaily.id); })
+        .then(function(){
+          return patch('daily_meta','?id=eq.'+existingDaily.id, {theme:theme, status:'draft'});
+        })
+        .then(function(){ return get('daily_meta','?date=eq.'+date); })
+        .then(function(dm){ return dm[0]; });
+    } else {
+      // 新規
+      return post('daily_meta',[{date:date,theme:theme,status:'draft',editorial_comment:''}])
+        .then(function(dm){ return dm[0]; });
+    }
+  }).then(function(dm){
+    D.daily = dm;
     D.picks = [];
     var ins = parsed.map(function(x,i){return{daily_id:D.daily.id,title:x.title,intro:x.intro,body:x.body,genre:x.genre,order_index:i};});
     var chain = Promise.resolve();
@@ -994,13 +1008,55 @@ function loadArc(){
     if(!ds||!ds.length){el.innerHTML='<div style="font-family:\'Space Mono\',monospace;font-size:10px;color:rgba(240,235,224,.2)">アーカイブなし</div>';return;}
     el.innerHTML = ds.map(function(d){
       var col = d.status==='published'?'#1a7a4a':d.status==='archived'?'#b8952a':'rgba(240,235,224,.2)';
-      return '<div class="arcard">'
+      return '<div class="arcard" style="display:flex;align-items:center;gap:12px">'
+        +'<div style="flex:1">'
         +'<div style="font-family:\'Space Mono\',monospace;font-size:11px;font-weight:700;color:#f0ebe0;margin-bottom:4px">'+d.date+'</div>'
         +'<div style="font-size:12px;color:rgba(240,235,224,.45);margin-bottom:8px">'+d.theme+'</div>'
         +'<span style="font-family:\'Space Mono\',monospace;font-size:9px;color:'+col+';border:1px solid '+col+';padding:2px 6px">'+d.status+'</span>'
+        +'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">'
+        +(d.status==='published'
+          ?'<button onclick="arcUnpublish(\''+d.id+'\')" style="font-family:\'Space Mono\',monospace;font-size:8px;padding:3px 8px;border:1px solid rgba(240,235,224,.18);background:transparent;color:rgba(240,235,224,.45);cursor:pointer">非公開</button>'
+          :'<button onclick="arcPublish(\''+d.id+'\')" style="font-family:\'Space Mono\',monospace;font-size:8px;padding:3px 8px;border:1px solid #1a7a4a;background:transparent;color:#1a7a4a;cursor:pointer">公開</button>')
+        +'<button onclick="arcDel(\''+d.id+'\',\''+d.date+'\')" style="font-family:\'Space Mono\',monospace;font-size:8px;padding:3px 8px;border:1px solid rgba(192,57,43,.4);background:transparent;color:rgba(192,57,43,.7);cursor:pointer">削除</button>'
+        +'</div>'
         +'</div>';
     }).join('');
   }).catch(function(){});
+}
+
+function arcUnpublish(id){
+  patch('daily_meta','?id=eq.'+id,{status:'draft'}).then(function(){
+    if(D.daily&&D.daily.id===id){D.daily.status='draft';updStrip();updPStat();}
+    loadArc(); toast('非公開にしました');
+  }).catch(function(e){toast('エラー: '+e.message);});
+}
+
+function arcPublish(id){
+  patch('daily_meta','?id=eq.'+id,{status:'published'}).then(function(){
+    if(D.daily&&D.daily.id===id){D.daily.status='published';updStrip();updPStat();}
+    loadArc(); toast('公開しました');
+  }).catch(function(e){toast('エラー: '+e.message);});
+}
+
+function arcDel(id, date){
+  if(!confirm(date+'のデータを完全削除しますか？\n（作品・ピック・投票・メタデータ全て削除されます）')) return;
+  del('picks','?daily_id=eq.'+id)
+    .then(function(){ return del('votes','?daily_id=eq.'+id); })
+    .then(function(){ return del('stories','?daily_id=eq.'+id); })
+    .then(function(){ return del('daily_meta','?id=eq.'+id); })
+    .then(function(){
+      if(D.daily&&D.daily.id===id){
+        D.daily=null; D.stories=[]; D.picks=[]; D.votes={};
+        rPL(); rPE(); updStrip(); updIStat(); updPStat();
+      }
+      loadArc(); toast(date+'を削除しました');
+    }).catch(function(e){toast('エラー: '+e.message);});
+}
+
+function doDelDaily(){
+  if(!D.daily){toast('データがありません');return;}
+  arcDel(D.daily.id, D.daily.date);
 }
 
 function autoRev(){
