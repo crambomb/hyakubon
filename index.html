@@ -305,6 +305,13 @@ body{font-family:'Noto Serif JP',serif;}
       </div>
     </div>
     <div class="acard"><div class="acard-lb">現在の状態</div><div class="astat" id="i-stat">読み込み中...</div></div>
+    <div class="acard" id="i-mgmt-card" style="display:none">
+      <div class="acard-lb" style="display:flex;align-items:center;justify-content:space-between">
+        <span>作品管理</span>
+        <button onclick="delAllStories()" style="font-family:'Space Mono',monospace;font-size:9px;padding:3px 10px;border:1px solid #c0392b;background:transparent;color:#c0392b;cursor:pointer">✕ 全削除</button>
+      </div>
+      <div id="i-story-list" style="max-height:340px;overflow-y:auto;margin-top:8px"></div>
+    </div>
   </div>
 
   <div class="atab-block" id="tab-publish">
@@ -825,13 +832,16 @@ function doImport(){
   var parsed;
   try{parsed=JSON.parse(json.replace(/```json\n?|```/g,'').trim());}
   catch(e){err.textContent='JSON形式が正しくありません';err.style.display='block';return;}
-  if(!Array.isArray(parsed)||parsed.length!==100){err.textContent='100本ちょうど必要です（現在'+(parsed?parsed.length:0)+'本）';err.style.display='block';return;}
+  if(!Array.isArray(parsed)||parsed.length<1){err.textContent='1本以上必要です';err.style.display='block';return;}
+  if(parsed.length>100){err.textContent='100本以内にしてください（現在'+parsed.length+'本）';err.style.display='block';return;}
   var bad = parsed.filter(function(x){return !x.title||!x.intro||!x.body||!x.genre;});
   if(bad.length){err.textContent='title/intro/body/genre が全て必要です';err.style.display='block';return;}
   var btn = document.getElementById('i-btn');
   btn.textContent='保存中...'; btn.disabled=true;
-  upsert('daily_meta',[{date:date,theme:theme,status:'draft',editorial_comment:''}]).then(function(dm){
+  // daily_metaをupsert（同日付なら上書き）
+  upsert('daily_meta',[{date:date,theme:theme,status:'draft',editorial_comment: (D.daily&&D.daily.date===date&&D.daily.editorial_comment)||''}]).then(function(dm){
     D.daily = dm[0];
+    // 既存storiesを全削除してから入れ直す
     return del('stories','?daily_id=eq.'+D.daily.id);
   }).then(function(){
     return del('picks','?daily_id=eq.'+D.daily.id);
@@ -849,7 +859,7 @@ function doImport(){
     D.stories=s; D.votes={};
     document.getElementById('i-json').value='';
     toast(D.stories.length+'本をインポートしました');
-    rPL(); rPE(); updStrip(); updIStat(); updPStat();
+    rPL(); rPE(); updStrip(); updIStat(); updPStat(); updPlRv(); updIStoryList();
     showTab('picks');
   }).catch(function(e){
     err.textContent='エラー: '+e.message; err.style.display='block';
@@ -866,6 +876,57 @@ function updIStat(){
     +'<div>ステータス：<b>'+(D.daily?D.daily.status:'—')+'</b></div>'
     +'<div>編集長ピック：<b style="color:#b8952a">'+ac+'</b>/3本</div>'
     +'<div>ゲストピック：<b style="color:#7ba8e0">'+gc+'</b>/3本</div>';
+  updIStoryList();
+}
+
+function updIStoryList(){
+  var card = document.getElementById('i-mgmt-card');
+  var el = document.getElementById('i-story-list');
+  if(!el||!card) return;
+  if(!D.stories.length){card.style.display='none';return;}
+  card.style.display='block';
+  el.innerHTML = D.stories.map(function(s){
+    var isPicked = D.picks.some(function(p){return p.story_id===s.id;});
+    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(240,235,224,.05)">'
+      +'<span style="font-family:\'Space Mono\',monospace;font-size:9px;color:rgba(240,235,224,.25);min-width:24px">'+('0'+(s.order_index+1)).slice(-2)+'</span>'
+      +'<span style="font-family:\'Shippori Mincho\',serif;font-size:12px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f0ebe0">'+s.title+'</span>'
+      +(isPicked?'<span style="font-family:\'Space Mono\',monospace;font-size:8px;color:#b8952a">ピック済</span>':'')
+      +'<button onclick="delStory(\''+s.id+'\',\''+s.title.replace(/'/g,"\\'")+'\')" style="font-family:\'Space Mono\',monospace;font-size:8px;padding:2px 7px;border:1px solid rgba(192,57,43,.4);background:transparent;color:rgba(192,57,43,.7);cursor:pointer;flex-shrink:0">✕</button>'
+      +'</div>';
+  }).join('');
+}
+
+function delStory(id, title){
+  if(!confirm('「'+title+'」を削除しますか？\nピック済みの場合はピックも削除されます。')) return;
+  var pickIds = D.picks.filter(function(p){return p.story_id===id;}).map(function(p){return p.id;});
+  var chain = Promise.resolve();
+  if(pickIds.length){
+    chain = chain.then(function(){return del('picks','?story_id=eq.'+id);});
+  }
+  chain.then(function(){
+    return del('stories','?id=eq.'+id);
+  }).then(function(){
+    D.stories = D.stories.filter(function(s){return s.id!==id;});
+    D.picks = D.picks.filter(function(p){return p.story_id!==id;});
+    // order_indexを振り直す
+    D.stories.forEach(function(s,i){s.order_index=i;});
+    toast('削除しました');
+    rPL(); rPE(); updStrip(); updIStat(); updPStat();
+  }).catch(function(e){toast('エラー: '+e.message);});
+}
+
+function delAllStories(){
+  if(!D.daily){toast('データがありません');return;}
+  if(!confirm('この日のデータを全て削除しますか？\n（ピック・投票も全て削除されます）')) return;
+  del('picks','?daily_id=eq.'+D.daily.id).then(function(){
+    return del('votes','?daily_id=eq.'+D.daily.id);
+  }).then(function(){
+    return del('stories','?daily_id=eq.'+D.daily.id);
+  }).then(function(){
+    D.stories=[]; D.picks=[]; D.votes={};
+    toast('全て削除しました');
+    rPL(); rPE(); updStrip(); updIStat(); updPStat();
+  }).catch(function(e){toast('エラー: '+e.message);});
 }
 
 function updStrip(){
